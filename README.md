@@ -95,6 +95,57 @@ The package never reads `process.env.*` itself — reading env vars and
 build-time dead-code folding (`MONITOR=off`) stay the host app's
 responsibility, so each bank keeps its own Terser/webpack fold intact.
 
+## Boot-failure watchdog: `buildWatchdogScript({ ingestUrl, timeoutMs })`
+
+If a host app's entire bundle (including this package) fails to load or
+execute at all — 404, network failure, syntax error that kills the JS
+parser before any code runs — no code living inside that bundle can ever
+detect the failure, since it never ran. `buildWatchdogScript()` returns a
+raw, hand-written **ES5 string** (no imports, no reference to any other
+export of this package, no build-step dependency) meant to be placed in a
+host's HTML `<script>` tag **before** the bundle's own script tag — same
+discipline as `vp`'s existing `STRIP_ENTRY_QUERY_SCRIPT`.
+
+Behavior:
+
+- Starts a timer for `timeoutMs` on execution.
+- If `window.__WV_BOOTED__` becomes `true` (set as the literal first line of
+  this package's own `start()`) before the timer fires, the watchdog does
+  nothing — zero network calls on a healthy boot.
+- If the timer fires with no boot signal, it sends exactly one beacon
+  (`sendBeacon` primary, `fetch` fallback, `navigator.onLine` guard, all
+  wrapped in try/catch — mirrors this package's own `tryBeaconOnly`/
+  `sendRaw`) to `ingestUrl` with **only** these hand-verified safe fields:
+  `{ event: 'boot_timeout', pathname: location.pathname, ts: Date.now() }`.
+  No `session_id` (nothing here generates one), no query string, no
+  referrer, no headers — there is no redaction pipeline available to a
+  pre-bundle script, so only fields manually confirmed safe by inspection
+  are shipped.
+
+```ts
+import { buildWatchdogScript } from '@internal/webview-monitor';
+
+const script = buildWatchdogScript({
+  ingestUrl: process.env.MONITOR_INGEST_URL || '',
+  timeoutMs: 8000, // placeholder — not yet tuned against real 3G bundle-load data
+});
+// place `script` as a headScripts entry BEFORE the bundle's own <script> tag
+```
+
+**Testing approach**: this string can't be meaningfully unit-tested as
+ordinary jsdom-run TypeScript — it's a pre-babel raw string meant for a
+`<script>` tag, not a module. `src/__tests__/watchdog.spec.ts` treats it as
+a black box: `new Function('window', src)(window)` evaluated against
+vitest's jsdom `window`, combined with fake timers. See that file's header
+comment for why this was chosen over a real-browser (Playwright) test — no
+browser-automation tooling exists in this repo today, and jsdom already
+covers every API the watchdog touches (`setTimeout`, `navigator.sendBeacon`,
+`navigator.onLine`, `fetch`, `location.pathname`).
+
+Per ADR-0001's **partial-adoption amendment**, a host may depend on this
+export alone, ahead of migrating the rest of its monitor code into this
+package — see `vp`'s `config/html.ts` for a live example.
+
 ## Versioning
 
 Releases are tagged `vX.Y.Z` (semver) on `main`. Consumers pin

@@ -45,6 +45,9 @@ import { detectDeviceModel, refineDeviceModel } from './env';
 import * as events from './events';
 import { __resetChunkerForTest as resetChunkerForTest } from './chunker';
 
+export { buildWatchdogScript } from './watchdog';
+export type { WatchdogScriptConfig } from './watchdog';
+
 export type { MonitorConfig } from './config';
 export type {
   ErrKind,
@@ -246,6 +249,23 @@ function safe<A extends unknown[]>(fn: (...a: A) => void): (...a: A) => void {
 }
 
 function _start(): void {
+  // Ticket 05 (boot watchdog) — LITERAL FIRST LINE of _start(), before the
+  // idempotency check, before the L2 kill switch, before anything else.
+  // The <script> from buildWatchdogScript() (see ./watchdog) runs BEFORE
+  // this bundle's own script tag and starts a timer waiting for this exact
+  // flag; every line of setup below this one is exactly the kind of work
+  // whose failure the watchdog exists to catch, so this assignment cannot
+  // wait for any of it — including the `if (state) return` idempotency
+  // guard, which only protects against _start() being called twice within
+  // an already-successfully-booted page.
+  try {
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __WV_BOOTED__?: boolean }).__WV_BOOTED__ = true;
+    }
+  } catch {
+    /* NFR-001 — never let boot-signal bookkeeping block startup */
+  }
+
   if (state) return; // idempotent
 
   // L2 — công tắc biên dịch (§1.6), phải là CHỐT ĐẦU TIÊN, trước cả L1.
