@@ -5,10 +5,15 @@ error tracking, time-to-home). Shared across bank webview repos.
 
 ## Status
 
-**Infrastructure scaffold only.** No real monitor logic has been ported into
-this package yet — that happens in ticket 04, blocked on this ticket
-(scaffolding) plus ticket 03 (config validation implementation). Until then,
-`src/index.ts` exports a placeholder `init()` that does nothing.
+**Real monitor logic is live** (ticket 04): the module moved wholesale from
+`vp`'s `src/utils/monitor/` — session lifecycle (`init/start/attachLifecycle/
+step/http/mark/route/event/finish`), Layer-1/Layer-2 redaction, sampling,
+outbox retry/backoff, and the event-stream chunker/transport. `vp` now
+installs this package as a git dependency instead of owning the code
+locally; see `vp`'s own `package.json` and `src/app.ts` for the real call
+site. The test suite (`src/__tests__/*.spec.ts`) is ported from `vp`'s
+original `src/utils/monitor/__tests__/` and exercises this package's public
+API directly — no host `app.ts`/`layouts` file is involved.
 
 ## Installation
 
@@ -19,7 +24,7 @@ Install it as a git dependency, pinned to a tag:
 ```json
 {
   "dependencies": {
-    "@internal/webview-monitor": "github:CB-B2B/webview-monitor#v0.0.1"
+    "@internal/webview-monitor": "github:CB-B2B/webview-monitor#v0.1.0"
   }
 }
 ```
@@ -98,8 +103,10 @@ the tag deliberately — there is no floating "latest".
 
 ## Scope note
 
-This repo intentionally contains no real monitor logic yet (no
-`STEP_NAMES`, route table generation, redaction rules, outbox/transport,
-etc.). Extraction from the `vp` host repo happens when a second bank
-actually needs this feature, per the parent spec's "Solution" section
-(`docs/features/webview-monitor-package-extraction.md` in the host repo).
+The extraction from `vp` (ticket 04) moved the module as-is — no behavior
+change, no redesign. `STEP_NAMES`/`STATIC_ROUTES`/`TEMPLATE_ROUTES` still
+ship as illustrative VPBank example constants (used as `normalizeRoute()`'s
+default route table when a caller doesn't pass its own), exactly as they did
+inside `vp` after ticket 03's decoupling — every consumer, including `vp`,
+is expected to pass its own `steps`/`staticRoutes`/`templateRoutes` via
+`init()` rather than relying on these defaults (ADR-0001).
