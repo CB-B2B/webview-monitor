@@ -128,6 +128,70 @@ describe('buildWatchdogScript — black-box eval', () => {
     expect(sendBeacon).not.toHaveBeenCalled();
   });
 
+  it('debug: false (default) — zero console calls, even on boot failure', () => {
+    const sendBeacon = vi.fn(() => true);
+    Object.defineProperty(window.navigator, 'sendBeacon', {
+      configurable: true,
+      writable: true,
+      value: sendBeacon,
+    });
+    const debugSpy = vi.spyOn(console, 'debug');
+
+    runWatchdog(); // default config has no `debug` key
+    vi.advanceTimersByTime(TIMEOUT_MS + 1);
+
+    expect(debugSpy).not.toHaveBeenCalled();
+  });
+
+  it('debug: true — logs armed/verdict lines on boot failure, still sends exactly one beacon', () => {
+    const sendBeacon = vi.fn(() => true);
+    Object.defineProperty(window.navigator, 'sendBeacon', {
+      configurable: true,
+      writable: true,
+      value: sendBeacon,
+    });
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+
+    const src = buildWatchdogScript({
+      ingestUrl: INGEST_URL,
+      timeoutMs: TIMEOUT_MS,
+      debug: true,
+    });
+    // eslint-disable-next-line no-new-func -- deliberate black-box eval, see file header
+    new Function('window', src)(window);
+    vi.advanceTimersByTime(TIMEOUT_MS + 1);
+
+    expect(sendBeacon).toHaveBeenCalledTimes(1);
+    const lines = debugSpy.mock.calls.map(call => String(call[0]));
+    expect(lines.some(l => l.includes('armed'))).toBe(true);
+    expect(lines.some(l => l.includes('firing boot_timeout'))).toBe(true);
+    expect(lines.some(l => l.includes('sendBeacon result: true'))).toBe(true);
+  });
+
+  it('debug: true — logs "not firing" when __WV_BOOTED__ is set in time, sends nothing', () => {
+    const sendBeacon = vi.fn(() => true);
+    Object.defineProperty(window.navigator, 'sendBeacon', {
+      configurable: true,
+      writable: true,
+      value: sendBeacon,
+    });
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+
+    const src = buildWatchdogScript({
+      ingestUrl: INGEST_URL,
+      timeoutMs: TIMEOUT_MS,
+      debug: true,
+    });
+    // eslint-disable-next-line no-new-func -- deliberate black-box eval, see file header
+    new Function('window', src)(window);
+    (window as unknown as { __WV_BOOTED__?: boolean }).__WV_BOOTED__ = true;
+    vi.advanceTimersByTime(TIMEOUT_MS + 1);
+
+    expect(sendBeacon).not.toHaveBeenCalled();
+    const lines = debugSpy.mock.calls.map(call => String(call[0]));
+    expect(lines.some(l => l.includes('not firing'))).toBe(true);
+  });
+
   it('missing ingestUrl: no beacon, no fetch', () => {
     const src = buildWatchdogScript({ ingestUrl: '', timeoutMs: TIMEOUT_MS });
     const sendBeacon = vi.fn(() => true);

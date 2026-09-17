@@ -43,6 +43,19 @@ export interface WatchdogScriptConfig {
    * against real network conditions.
    */
   timeoutMs: number;
+  /**
+   * Opt-in console.debug lines for local/dev verification — OFF by
+   * default so every existing host and every existing test observes zero
+   * behavior change. Logs the arm time, whether/when __WV_BOOTED__ got set,
+   * and the fire-or-skip verdict at timeout. Every call site is wrapped by
+   * the same outer try/catch as the rest of the script (a console-less
+   * embedded webview, or a frozen console object, must never turn into a
+   * thrown error here — that would defeat the whole point of a watchdog).
+   * Never enable this in production: it is meant for a host's own local
+   * dev config, gated at the HOST's call site (see vp's config/html.ts),
+   * not by any check inside this script itself.
+   */
+  debug?: boolean;
 }
 
 /**
@@ -58,6 +71,7 @@ export function buildWatchdogScript(config: WatchdogScriptConfig): string {
   const timeoutMs = String(
     Number.isFinite(timeoutMsNum) && timeoutMsNum >= 0 ? timeoutMsNum : 0,
   );
+  const debug = config.debug === true;
 
   return (
     '(function (w) {\n' +
@@ -68,11 +82,40 @@ export function buildWatchdogScript(config: WatchdogScriptConfig): string {
     '    var TIMEOUT_MS = ' +
     timeoutMs +
     ';\n' +
+    '    var DEBUG = ' +
+    String(debug) +
+    ';\n' +
+    // Guarded the same way as every other browser API in this file — a
+    // console-less embedded webview (or a locked-down one) must fall
+    // through silently, not throw. try/catch AROUND the console call
+    // (not just typeof) because some hosts throw on invoking a
+    // native-looking but stubbed console.debug, not just on missing it.
+    '    function log(msg) {\n' +
+    '      if (!DEBUG) return;\n' +
+    '      try {\n' +
+    "        if (w.console && typeof w.console.debug === 'function') {\n" +
+    "          w.console.debug('[watchdog debug] ' + msg);\n" +
+    '        }\n' +
+    '      } catch (logErr) {\n' +
+    '        /* no-op — logging must never throw from the watchdog */\n' +
+    '      }\n' +
+    '    }\n' +
+    "    log('armed, timeout=' + TIMEOUT_MS + 'ms');\n" +
     '    setTimeout(function () {\n' +
     '      try {\n' +
-    '        if (w.__WV_BOOTED__ === true) return;\n' +
-    '        if (!INGEST_URL) return;\n' +
-    '        if (!w.navigator || w.navigator.onLine === false) return;\n' +
+    '        if (w.__WV_BOOTED__ === true) {\n' +
+    "          log('__WV_BOOTED__ already true at timeout — not firing');\n" +
+    '          return;\n' +
+    '        }\n' +
+    '        if (!INGEST_URL) {\n' +
+    "          log('timeout reached but no ingestUrl configured — not firing');\n" +
+    '          return;\n' +
+    '        }\n' +
+    '        if (!w.navigator || w.navigator.onLine === false) {\n' +
+    "          log('timeout reached but offline — not firing');\n" +
+    '          return;\n' +
+    '        }\n' +
+    "        log('timeout reached, __WV_BOOTED__ not set — firing boot_timeout');\n" +
     '        var payload = JSON.stringify({\n' +
     "          event: 'boot_timeout',\n" +
     '          pathname: w.location ? w.location.pathname : \'\',\n' +
@@ -86,9 +129,11 @@ export function buildWatchdogScript(config: WatchdogScriptConfig): string {
     '        } catch (beaconErr) {\n' +
     '          sent = false;\n' +
     '        }\n' +
+    "        log('sendBeacon result: ' + sent);\n" +
     '        if (!sent) {\n' +
     '          try {\n' +
     '            if (typeof w.fetch === \'function\') {\n' +
+    "              log('falling back to fetch');\n" +
     '              w.fetch(INGEST_URL, {\n' +
     "                method: 'POST',\n" +
     '                body: payload,\n' +

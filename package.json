@@ -1,6 +1,6 @@
 {
   "name": "@internal/webview-monitor",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Host-configured webview session monitor. No built-in defaults — see README and ADR-0001.",
   "private": true,
   "license": "UNLICENSED",
