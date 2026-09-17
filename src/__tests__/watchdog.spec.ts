@@ -65,7 +65,7 @@ describe('buildWatchdogScript — black-box eval', () => {
   });
 
   it('boot failure: timeout elapses with no signal → exactly one beacon, minimal payload', () => {
-    const sendBeacon = vi.fn(() => true);
+    const sendBeacon = vi.fn((_url: string, _body: string) => true);
     Object.defineProperty(window.navigator, 'sendBeacon', {
       configurable: true,
       writable: true,
@@ -97,14 +97,14 @@ describe('buildWatchdogScript — black-box eval', () => {
       writable: true,
       value: undefined,
     });
-    const fetchMock = vi.fn(() => Promise.resolve());
+    const fetchMock = vi.fn((_url: string, _init: RequestInit) => Promise.resolve());
     (window as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
 
     runWatchdog();
     vi.advanceTimersByTime(TIMEOUT_MS + 1);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe(INGEST_URL);
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string)).toMatchObject({ event: 'boot_timeout' });

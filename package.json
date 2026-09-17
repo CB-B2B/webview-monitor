@@ -4,7 +4,6 @@
   "description": "Host-configured webview session monitor. No built-in defaults — see README and ADR-0001.",
   "private": true,
   "license": "UNLICENSED",
-  "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
