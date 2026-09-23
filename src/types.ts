@@ -4,24 +4,20 @@
 // webview-monitoring). Không có logic — chỉ khai báo kiểu, để dùng chung
 // giữa mã sản xuất và test (T077 đòi hằng số danh sách trường dùng chung).
 
-// Ví dụ cụ thể của `vp` (VPBank) — KHÔNG phải danh sách cố định của
-// module: sau ticket 03 (webview-monitor-package-extraction), danh sách
-// bước thật sự do host truyền vào qua `monitor.init({ steps })`
-// (ADR-0001 — học-thời-gọi không có mặc định cấp module). Kiểu
-// `StepName` giữ dạng union chuỗi 6 giá trị này vì `vp` (host duy nhất
-// hiện có) vẫn dùng đúng tập này — một bank khác sẽ cần union khác
-// khi được tách thành package (hoãn theo ADR-0001).
-export type StepName =
-  | 'auth_user' // authUser(location.query)          layouts/index.tsx:183
-  | 'home_float_icon' // getHomeFloatIcon()                            :185
-  | 'partner_id' // getPartnerId()                                :186
-  | 'home_banner' // handleShowHomeBanner()                        :187
-  | 'config' // getCfg()                                      :188
-  | 'search_hint'; // fetchSearchHintNews({...})                  :189-191
+// StepName was a closed 6-literal union hardcoded to vp's own step names
+// until tp (the second real host) needed to pass its own set
+// ('emulator_token', etc.) and couldn't — a genuine ADR-0001 violation for
+// this one field (host-supplied config with a built-in-to-one-host type).
+// Widened to `string`: nothing in this package matches StepName against
+// specific literals (grep confirms — it only flows through as an opaque
+// label on StepResult/monitor.step()), so this is a pure type widening,
+// zero behavior change for any existing consumer.
+export type StepName = string;
 
-// Ví DỤ của `vp` — giá trị THẬT do `src/app.ts` truyền vào qua
-// `monitor.init({ steps: STEP_NAMES, ... })`. KHÔNG còn là hằng số nội bộ
-// của index.ts — xem src/app.ts cho call site thật.
+// Sample step names — vp's own set, kept here only as the package's own
+// test fixture default (see __tests__/configFixture.ts). NOT a module
+// default for any consuming host (ADR-0001) — every host still owns and
+// passes its own steps via monitor.init({ steps }).
 export const STEP_NAMES: ReadonlyArray<StepName> = [
   'auth_user',
   'home_float_icon',
