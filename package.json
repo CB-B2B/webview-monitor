@@ -1,6 +1,6 @@
 {
   "name": "@internal/webview-monitor",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Host-configured webview session monitor. No built-in defaults — see README and ADR-0001.",
   "private": true,
   "license": "UNLICENSED",
@@ -9,9 +9,6 @@
   "files": [
     "dist"
   ],
-  "engines": {
-    "node": ">=18"
-  },
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
