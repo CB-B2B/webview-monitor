@@ -24,7 +24,7 @@ Install it as a git dependency, pinned to a tag:
 ```json
 {
   "dependencies": {
-    "@internal/webview-monitor": "github:CB-B2B/webview-monitor#v0.1.0"
+    "@internal/webview-monitor": "github:CB-B2B/webview-monitor#v0.3.0"
   }
 }
 ```
@@ -95,12 +95,16 @@ The package never reads `process.env.*` itself — reading env vars and
 build-time dead-code folding (`MONITOR=off`) stay the host app's
 responsibility, so each bank keeps its own Terser/webpack fold intact.
 
-## First-load timing in the session summary (v0.3.0)
+## v0.3.0: first-load timing and one session ID
 
-No config needed. The summary gains `load` (flattened on O2 as `load_*`)
-and `hidden_before_home`; terms follow `CONTEXT.md`. Every `load` value is
-ms from **Navigation start**, read once at `finish()` from existing browser
-timings (no observer):
+No config and no API change: bump the tag to `#v0.3.0` and the fields below
+appear. Terms follow `CONTEXT.md` (**Navigation start**, **Bundle start**,
+**Home ready**, **First load**).
+
+### New summary fields
+
+`load` (flattened on O2 as `load_*`): every value is ms from **Navigation
+start**, read once at `finish()` from existing browser timings (no observer):
 
 | Field | Source |
 | --- | --- |
@@ -109,26 +113,60 @@ timings (no observer):
 | `js_start_ms` | **Bundle start** (`performance.now()` at `start()`) |
 | `js_download_ms` | main-bundle resource entry `responseEnd − startTime` |
 | `js_cached` | main-bundle resource entry `transferSize === 0` |
-| `first_paint_ms` | paint entry `first-contentful-paint` (a spinner counts) |
+| `first_paint_ms` | paint entry `first-contentful-paint` (a spinner counts) = **First load** |
 
 A field the webview doesn't provide is **absent** (never 0/null); if all are
 missing, `load` is dropped. Only numbers/booleans are sent, never resource
-URLs. `hidden_before_home` is `true` if the page was hidden at `start()` or
-went hidden before `mark('home_ready')`; `false` means "not detected" (some
-Android WebViews never report hidden). `time_to_home_ms` is unchanged (still
-from Bundle start).
+URLs. `time_to_home_ms` is unchanged (still from Bundle start to Home ready).
+
+- `hidden_before_home`: `true` if the page was hidden at `start()` or went
+  hidden before `mark('home_ready')`, else `false`.
+- `boot_timed_out: true`: the watchdog already fired `boot_timeout` before
+  this bundle ran (absent otherwise, never `false`).
+- `session_id`: reused from the watchdog (`window.__WV_SID__`, if a valid
+  UUID), so `boot_timeout`, the summary, events and `X-Session-Id` share one
+  ID. No watchdog ⇒ `start()` generates its own, as before.
+- `sid_weak: true`: the ID came from `Math.random` (no usable `crypto`). Same
+  meaning on `boot_timeout` and the summary.
 
 **Main bundle** = first `script` resource entry whose file name matches
 `umi.js` / `umi.<hash>.js` (umi with `hash: true`); query/hash ignored.
 One exported pattern, `MAIN_BUNDLE_RE`, is shared with the watchdog so
 `load.js_*` and `boot_timeout.load_js_downloaded` always agree.
-No match ⇒ `js_download_ms`/`js_cached` absent. The pattern still has to
-be confirmed against TP's prod build.
+No match ⇒ `js_download_ms`/`js_cached` absent.
 
-**`js_cached` caveat:** if the bundle is served from another origin without
-`Timing-Allow-Origin`, some webviews report `transferSize` as `0` even on a
-network fetch, so `js_cached: true` is **not reliable** for cross-origin
-bundles.
+### Reading a slow session
+
+Filter by `session_id`; the biggest jump between adjacent `load_*` values is
+where the time went.
+
+| Signal | Likely cause |
+| --- | --- |
+| `hidden_before_home = true` | Webview paused/backgrounded: not a real slow load, check this first |
+| `load_server_response_ms` large | Server/CDN slow to send HTML |
+| `load_html_ready_ms` ≫ `load_server_response_ms` | HTML and its head scripts (GTM, third-party) slow |
+| `load_js_start_ms` large, `load_js_download_ms` large, `load_js_cached = false` | Network / bundle too big |
+| `load_js_start_ms` large, `load_js_download_ms` small | Device slow to parse/execute JS |
+| `time_to_home_ms` large, `load_*` small | Boot steps after Bundle start; see `steps` |
+| `boot_timeout` row, no summary row | Bundle never ran: `load_js_downloaded = false` ⇒ stuck on the network, `true` ⇒ stuck in JS (parse error/crash) |
+| Summary with `boot_timed_out = true` | Bundle ran later than `timeoutMs` but recovered |
+| Everything small, user still reports slow | Time is spent in the native app before Navigation start |
+
+### Limits
+
+- `hidden_before_home = false` means "not detected", **not** "stayed
+  visible": some Android WebViews never fire `visibilitychange`.
+- The watchdog and summary IDs only match when **both** the watchdog script
+  and the bundle come from v0.3.0 (an older bundle ignores `__WV_SID__`; an
+  older watchdog sends no `session_id`). Build both from the same package.
+- `sid_weak` changed meaning: up to v0.2.5 the `crypto.getRandomValues`
+  fallback was also flagged; from v0.3.0 only `Math.random` is (getRandomValues
+  is a CSPRNG). Don't compare `sid_weak` rates across that boundary.
+- `js_cached`: if the bundle is served from another origin without
+  `Timing-Allow-Origin`, some webviews report `transferSize` as `0` even on a
+  network fetch, so `js_cached: true` is **not reliable** for cross-origin
+  bundles.
+- `MAIN_BUNDLE_RE` still has to be confirmed against TP's prod build.
 
 ## Boot-failure watchdog: `buildWatchdogScript({ ingestUrl, timeoutMs })`
 
@@ -144,13 +182,10 @@ discipline as `vp`'s existing `STRIP_ENTRY_QUERY_SCRIPT`.
 Behavior:
 
 - On execution, generates a random UUID v4 `session_id` (`crypto.randomUUID`
-  → `crypto.getRandomValues` → `Math.random`) and stores it on
-  `window.__WV_SID__` (plus `window.__WV_SID_WEAK__ = true` only for the
-  `Math.random` fallback — the same meaning `sid_weak` has in the summary;
-  `getRandomValues` is a CSPRNG and is not flagged), then starts a timer for `timeoutMs`. This
-  package's `start()` reuses a well-formed `__WV_SID__`, so `boot_timeout`,
-  the session summary, events and `X-Session-Id` share one ID. Hosts
-  without the watchdog: `start()` generates its own ID as before.
+  → `crypto.getRandomValues` → `Math.random`) on `window.__WV_SID__` (plus
+  `window.__WV_SID_WEAK__ = true` for `Math.random`), then starts a timer for
+  `timeoutMs`. See [v0.3.0](#v030-first-load-timing-and-one-session-id) for
+  how the bundle reuses it.
 - If `window.__WV_BOOTED__` becomes `true` (set as the literal first line of
   this package's own `start()`) before the timer fires, the watchdog does
   nothing — zero network calls on a healthy boot.
@@ -162,10 +197,9 @@ Behavior:
   **only** these hand-verified safe fields:
   `{ event: 'boot_timeout', session_id, sid_weak?, pathname, ts,
   load_server_response_ms?, load_html_ready_ms?, load_js_downloaded? }`.
-  `load_*` are ms from Navigation start (navigation entry `responseStart`,
-  `domContentLoadedEventEnd`; omitted when unreadable or not reached yet)
-  and whether a main-bundle (`MAIN_BUNDLE_RE`) script resource entry exists
-  (`false` ⇒ stuck on the network, `true` ⇒ stuck in JS). `session_id` is
+  `load_*` have the same meaning as the summary's `load` (omitted when
+  unreadable or not reached yet); `load_js_downloaded` is whether a
+  main-bundle script resource entry exists yet. `session_id` is
   a random UUID, not personal data. No query string, no referrer, no
   headers, no resource URLs — there is no redaction pipeline available to
   a pre-bundle script, so only fields manually confirmed safe by
