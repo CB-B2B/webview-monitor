@@ -108,19 +108,32 @@ discipline as `vp`'s existing `STRIP_ENTRY_QUERY_SCRIPT`.
 
 Behavior:
 
-- Starts a timer for `timeoutMs` on execution.
+- On execution, generates a random UUID v4 `session_id` (`crypto.randomUUID`
+  → `crypto.getRandomValues` → `Math.random`) and stores it on
+  `window.__WV_SID__` (plus `window.__WV_SID_WEAK__ = true` only for the
+  `Math.random` fallback), then starts a timer for `timeoutMs`. This
+  package's `start()` reuses a well-formed `__WV_SID__`, so `boot_timeout`,
+  the session summary, events and `X-Session-Id` share one ID. Hosts
+  without the watchdog: `start()` generates its own ID as before.
 - If `window.__WV_BOOTED__` becomes `true` (set as the literal first line of
   this package's own `start()`) before the timer fires, the watchdog does
   nothing — zero network calls on a healthy boot.
-- If the timer fires with no boot signal, it sends exactly one beacon
-  (`sendBeacon` primary, `fetch` fallback, `navigator.onLine` guard, all
-  wrapped in try/catch — mirrors this package's own `tryBeaconOnly`/
-  `sendRaw`) to `ingestUrl` with **only** these hand-verified safe fields:
-  `{ event: 'boot_timeout', pathname: location.pathname, ts: Date.now() }`.
-  No `session_id` (nothing here generates one), no query string, no
-  referrer, no headers — there is no redaction pipeline available to a
-  pre-bundle script, so only fields manually confirmed safe by inspection
-  are shipped.
+- If the timer fires with no boot signal, it sets `window.__WV_TIMED_OUT__ =
+  true` (the summary then carries `boot_timed_out: true` if the bundle runs
+  late) and sends exactly one beacon (`sendBeacon` primary, `fetch`
+  fallback, `navigator.onLine` guard, all wrapped in try/catch — mirrors
+  this package's own `tryBeaconOnly`/`sendRaw`) to `ingestUrl` with
+  **only** these hand-verified safe fields:
+  `{ event: 'boot_timeout', session_id, sid_weak?, pathname, ts,
+  load_server_response_ms?, load_html_ready_ms?, load_js_downloaded? }`.
+  `load_*` are ms from Navigation start (navigation entry `responseStart`,
+  `domContentLoadedEventEnd`; omitted when unreadable or not reached yet)
+  and whether a main-bundle (`umi.*.js`) script resource entry exists
+  (`false` ⇒ stuck on the network, `true` ⇒ stuck in JS). `session_id` is
+  a random UUID, not personal data. No query string, no referrer, no
+  headers, no resource URLs — there is no redaction pipeline available to
+  a pre-bundle script, so only fields manually confirmed safe by
+  inspection are shipped.
 
 ```ts
 import { buildWatchdogScript } from '@internal/webview-monitor';

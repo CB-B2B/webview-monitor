@@ -106,6 +106,7 @@ export interface SessionPayload {
   // --- Định danh phiên (bảng A) ---
   session_id: string; // crypto.randomUUID() — FR-008
   sid_weak?: true; // chỉ có khi phải dùng fallback sinh id (E008)
+  boot_timed_out?: true; // watchdog đã bắn boot_timeout trước khi bundle chạy (ticket 02); vắng = không bắn
 
   // --- Thời gian (bảng A) --- LUÔN number, không bao giờ string (§2.5)
   session_started_at: number; // epoch ms
@@ -164,6 +165,7 @@ export interface SessionPayload {
 export const WHITELIST_FIELDS: ReadonlyArray<keyof SessionPayload> = [
   'session_id',
   'sid_weak',
+  'boot_timed_out',
   'session_started_at',
   'session_finished_at',
   'session_duration_ms',

@@ -451,6 +451,67 @@ describe('monitor — vòng đời một phiên', () => {
     expect(remaining.length).toBe(1);
     expect(remaining[0].target).toBe('events');
   });
+
+  // Ticket 02 — watchdog và bundle dùng chung session_id qua window.__WV_SID__
+  describe('dùng lại session_id của watchdog', () => {
+    const WATCHDOG_SID = '0f8e2a4c-5b6d-4e7f-9a1b-2c3d4e5f6a7b';
+    type WvGlobals = {
+      __WV_SID__?: unknown;
+      __WV_SID_WEAK__?: unknown;
+      __WV_TIMED_OUT__?: unknown;
+    };
+    const wv = window as unknown as WvGlobals;
+
+    afterEach(() => {
+      delete wv.__WV_SID__;
+      delete wv.__WV_SID_WEAK__;
+      delete wv.__WV_TIMED_OUT__;
+    });
+
+    it('__WV_SID__ đúng dạng UUID ⇒ summary và sessionId() dùng đúng ID đó', async () => {
+      wv.__WV_SID__ = WATCHDOG_SID;
+      monitor.start();
+      expect(sessionId()).toBe(WATCHDOG_SID);
+      monitor.finish('home_shown');
+      const [sent] = JSON.parse(await blobText(lastSentPayload(sendBeaconMock)));
+      expect(sent.session_id).toBe(WATCHDOG_SID);
+      expect('sid_weak' in sent).toBe(false);
+    });
+
+    it('__WV_SID_WEAK__ = true ⇒ summary có sid_weak: true', async () => {
+      wv.__WV_SID__ = WATCHDOG_SID;
+      wv.__WV_SID_WEAK__ = true;
+      monitor.start();
+      monitor.finish('home_shown');
+      const [sent] = JSON.parse(await blobText(lastSentPayload(sendBeaconMock)));
+      expect(sent.session_id).toBe(WATCHDOG_SID);
+      expect(sent.sid_weak).toBe(true);
+    });
+
+    it('__WV_SID__ sai dạng ⇒ bỏ qua, tự sinh UUID mới', () => {
+      wv.__WV_SID__ = 'not-a-uuid</script>';
+      monitor.start();
+      expect(sessionId()).not.toBe('not-a-uuid</script>');
+      expect(sessionId()).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    });
+
+    it('watchdog đã bắn (__WV_TIMED_OUT__) ⇒ summary cùng ID có boot_timed_out: true', async () => {
+      wv.__WV_SID__ = WATCHDOG_SID;
+      wv.__WV_TIMED_OUT__ = true;
+      monitor.start();
+      monitor.finish('home_shown');
+      const [sent] = JSON.parse(await blobText(lastSentPayload(sendBeaconMock)));
+      expect(sent.session_id).toBe(WATCHDOG_SID);
+      expect(sent.boot_timed_out).toBe(true);
+    });
+
+    it('không có __WV_TIMED_OUT__ ⇒ summary vắng boot_timed_out (không ghi false)', async () => {
+      monitor.start();
+      monitor.finish('home_shown');
+      const [sent] = JSON.parse(await blobText(lastSentPayload(sendBeaconMock)));
+      expect('boot_timed_out' in sent).toBe(false);
+    });
+  });
 });
 
 describe('monitor — http() tương quan bước (T097-T099, T010)', () => {
