@@ -274,6 +274,13 @@ describe('applyLayer2 — bảng B/C (§2.6)', () => {
     expect(payload.error!.message).toBe('[redacted]');
   });
 
+  // v0.3.0 — trường first load phải nằm trong whitelist dùng chung
+  it('WHITELIST_FIELDS chứa load và hidden_before_home', () => {
+    expect(WHITELIST_FIELDS).toEqual(
+      expect.arrayContaining(['load', 'hidden_before_home']),
+    );
+  });
+
   // T077 — Lớp 1 đóng kín, property-based trên WHITELIST_FIELDS
   it('T077: Object.keys(payload) luôn là tập con nghiêm ngặt của WHITELIST_FIELDS', () => {
     fc.assert(

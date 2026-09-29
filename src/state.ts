@@ -31,6 +31,7 @@ export interface SessionState {
   finished: boolean; // phase-1: doc đã phát (giữ nguyên cho payload legacy)
   finishReason?: FinishReason;
   homeReached: boolean;
+  hiddenBeforeHome?: true; // v0.3.0 — trang ẩn lúc start() hoặc trước home_ready
   topError?: unknown; // Error-like gốc — chuyển sang TechError lúc buildPayload
   sampleRate: number;
   sendAttempt: number;

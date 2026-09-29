@@ -98,6 +98,15 @@ export function installNavigationTiming(
   });
 }
 
+/** getEntriesByType giả theo loại entry (navigation/paint/resource). */
+export function installPerformanceEntries(byType: Record<string, object[]>) {
+  Object.defineProperty(performance, 'getEntriesByType', {
+    configurable: true,
+    writable: true,
+    value: vi.fn((type: string) => byType[type] || []),
+  });
+}
+
 export function removeNavigationTiming() {
   Object.defineProperty(performance, 'getEntriesByType', {
     configurable: true,

@@ -103,6 +103,14 @@ function getNavigationStart(): number {
   return Date.now();
 }
 
+function isHidden(): boolean {
+  try {
+    return document.visibilityState === 'hidden';
+  } catch {
+    return false; // NFR-001
+  }
+}
+
 function classifyHost(url: string): 'main' | 'sys' | 'other' {
   const { mainEndpoint, sysEndpoint } = getConfig();
   if (mainEndpoint && url.indexOf(mainEndpoint) === 0) return 'main';
@@ -192,6 +200,7 @@ function buildTransportDeps(): TransportDeps {
       typeof navigator !== 'undefined' &&
       typeof navigator.sendBeacon === 'function',
     sendBeacon: (u: string, b: Blob) => navigator.sendBeacon(u, b),
+    // SAFETY: stub chỉ reject — không bao giờ đọc tham số nên khớp mọi chữ ký fetch.
     fetchFn:
       typeof fetch === 'undefined'
         ? (fetchNotSupported as unknown as typeof fetch)
@@ -260,6 +269,7 @@ function _start(): void {
   // an already-successfully-booted page.
   try {
     if (typeof window !== 'undefined') {
+      // SAFETY: global tự khai của watchdog, không có trong lib.dom — chỉ ghi.
       (window as unknown as { __WV_BOOTED__?: boolean }).__WV_BOOTED__ = true;
     }
   } catch {
@@ -303,6 +313,7 @@ function _start(): void {
     marks: {},
     finished: false,
     homeReached: false,
+    hiddenBeforeHome: isHidden() || undefined,
     sampleRate: 1, // FR-015: doc không bao giờ lấy mẫu — payload ghi 1
     sendAttempt: 1,
     currentStepSeq: null,
@@ -443,8 +454,10 @@ function _finish(reason: FinishReason): void {
     events.closeEventStream(reason);
     state.sessionClosed = true;
   }
-  // (d) — checkpoint flush, stream tiếp tục.
+  // (d) — checkpoint flush, stream tiếp tục. v0.3.0: ẩn trước home_ready ⇒
+  // hidden_before_home (dùng lại listener visibilitychange sẵn có).
   if (reason === 'visibility_hidden') {
+    if (state.marks.home_ready === undefined) state.hiddenBeforeHome = true;
     events.flushCheckpoint();
   }
 

@@ -113,6 +113,20 @@ export interface SessionPayload {
   session_duration_ms: number;
   time_to_home_ms?: number; // marks.home_ready − navigation start
 
+  // --- First load (v0.3.0) — ms từ Navigation start, đọc lúc finish().
+  // Trường không đọc được thì VẮNG (không 0/null); cả nhóm rỗng thì bỏ `load`.
+  // CHỈ số/boolean — không bao giờ URL/chuỗi từ resource entry.
+  load?: {
+    server_response_ms?: number; // navigation entry responseStart
+    html_ready_ms?: number; // navigation entry domContentLoadedEventEnd
+    js_start_ms?: number; // Bundle start (navMs lúc start())
+    js_download_ms?: number; // bundle chính umi.*.js: responseEnd − startTime
+    js_cached?: boolean; // bundle chính: transferSize === 0
+    first_paint_ms?: number; // paint 'first-contentful-paint' (spinner cũng tính)
+  };
+  // false = "không phát hiện ẩn" (một số Android WebView không báo sự kiện ẩn).
+  hidden_before_home?: boolean;
+
   // --- Kết quả bước (bảng A) ---
   steps: StepResult[]; // đúng 6 phần tử, kể cả bước chưa chạy tới ('pending')
 
@@ -168,6 +182,8 @@ export const WHITELIST_FIELDS: ReadonlyArray<keyof SessionPayload> = [
   'session_finished_at',
   'session_duration_ms',
   'time_to_home_ms',
+  'load',
+  'hidden_before_home',
   'steps',
   'home_reached',
   'finish_reason',
