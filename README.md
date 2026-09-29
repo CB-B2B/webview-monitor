@@ -172,7 +172,9 @@ the fields are defined, not from a verified incident; treat them as leads.
   `Timing-Allow-Origin`, some webviews report `transferSize` as `0` even on a
   network fetch, so `js_cached: true` is **not reliable** for cross-origin
   bundles.
-- `MAIN_BUNDLE_RE` still has to be confirmed against TP's prod build.
+- `MAIN_BUNDLE_RE` is confirmed against TP's prod build (`UMI_ENV=prod umi
+  build`: the only match among 92 JS files is `/umi.<hash>.js`). Other hosts
+  with a different entry name get no `js_*` / `load_js_downloaded`.
 
 ## Boot-failure watchdog: `buildWatchdogScript({ ingestUrl, timeoutMs })`
 
