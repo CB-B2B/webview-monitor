@@ -22,6 +22,7 @@ export interface StepFailure {
 export interface SessionState {
   sessionId: string;
   sidWeak?: true;
+  bootTimedOut?: true; // window.__WV_TIMED_OUT__ lúc start() (ticket 02)
   startedAt: number; // epoch ms — quy chiếu navigation start (không phải mount)
   navMs: number; // performance.now() lúc start()
   steps: StepResult[]; // đúng 6 phần tử, khởi tạo 'pending'

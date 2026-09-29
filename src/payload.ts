@@ -148,6 +148,7 @@ export function buildPayload(
   const payload: SessionPayload = {
     session_id: state.sessionId,
     sid_weak: state.sidWeak,
+    boot_timed_out: state.bootTimedOut,
     session_started_at: state.startedAt,
     session_finished_at: Date.now(),
     session_duration_ms: performance.now() - state.navMs, // A-25: đồng hồ đơn điệu

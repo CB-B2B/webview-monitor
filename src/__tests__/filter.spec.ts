@@ -307,6 +307,11 @@ describe('applyLayer2 — bảng B/C (§2.6)', () => {
     );
   });
 
+  // Ticket 02 — cờ watchdog đã bắn phải nằm trong whitelist Lớp 1
+  it('WHITELIST_FIELDS chứa boot_timed_out', () => {
+    expect(WHITELIST_FIELDS as ReadonlyArray<string>).toContain('boot_timed_out');
+  });
+
   // T080 — step<T> trong suốt (thuộc invariant chung, kiểm tại monitor.spec.ts thực thi thật)
 
   // T083 — mọi trường thời gian là number

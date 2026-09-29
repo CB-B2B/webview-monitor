@@ -163,6 +163,35 @@ function generateSessionId(): { id: string; weak?: true } {
   return { id, weak: true };
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Ticket 02: watchdog (./watchdog) sinh session_id trước bundle và để ở
+ * window.__WV_SID__ — dùng lại để boot_timeout và summary cùng phiên nối
+ * được trên O2. Sai dạng/không có ⇒ null ⇒ tự sinh như cũ (host không
+ * dùng watchdog không đổi hành vi).
+ */
+function readWatchdogSessionId(): { id: string; weak?: true } | null {
+  try {
+    const w = window as unknown as { __WV_SID__?: unknown; __WV_SID_WEAK__?: unknown };
+    if (typeof w.__WV_SID__ !== 'string' || !UUID_RE.test(w.__WV_SID__)) return null;
+    return w.__WV_SID_WEAK__ === true ? { id: w.__WV_SID__, weak: true } : { id: w.__WV_SID__ };
+  } catch {
+    return null;
+  }
+}
+
+function readWatchdogTimedOut(): true | undefined {
+  try {
+    return (window as unknown as { __WV_TIMED_OUT__?: unknown }).__WV_TIMED_OUT__ === true
+      ? true
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // phase-2 R2-6: guard đổi từ state.finished (doc đã gửi) sang state.
 // sessionClosed (stream đã đóng) — bước vẫn bookkeep sau Home cho tới khi
 // trang chết.
@@ -300,11 +329,12 @@ function _start(): void {
   // động đầy đủ cho MỌI phiên bất kể rate. Hệ quả có chủ: sessionId() khác
   // rỗng ở 100% phiên ⇒ X-Session-Id header có ở mọi request (FR-005 nối
   // backend-log). `flag.rate` deprecated — KHÔNG dùng để bốc sampling.
-  const { id, weak } = generateSessionId();
+  const { id, weak } = readWatchdogSessionId() || generateSessionId();
   const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
   state = {
     sessionId: id,
     sidWeak: weak,
+    bootTimedOut: readWatchdogTimedOut(),
     startedAt: getNavigationStart(),
     navMs: performance.now(),
     steps: initStepResults(getConfig().steps),
