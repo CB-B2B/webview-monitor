@@ -95,6 +95,39 @@ The package never reads `process.env.*` itself — reading env vars and
 build-time dead-code folding (`MONITOR=off`) stay the host app's
 responsibility, so each bank keeps its own Terser/webpack fold intact.
 
+## First-load timing in the session summary (v0.3.0)
+
+No config needed. The summary gains `load` (flattened on O2 as `load_*`)
+and `hidden_before_home`; terms follow `CONTEXT.md`. Every `load` value is
+ms from **Navigation start**, read once at `finish()` from existing browser
+timings (no observer):
+
+| Field | Source |
+| --- | --- |
+| `server_response_ms` | navigation entry `responseStart` |
+| `html_ready_ms` | navigation entry `domContentLoadedEventEnd` |
+| `js_start_ms` | **Bundle start** (`performance.now()` at `start()`) |
+| `js_download_ms` | main-bundle resource entry `responseEnd − startTime` |
+| `js_cached` | main-bundle resource entry `transferSize === 0` |
+| `first_paint_ms` | paint entry `first-contentful-paint` (a spinner counts) |
+
+A field the webview doesn't provide is **absent** (never 0/null); if all are
+missing, `load` is dropped. Only numbers/booleans are sent, never resource
+URLs. `hidden_before_home` is `true` if the page was hidden at `start()` or
+went hidden before `mark('home_ready')`; `false` means "not detected" (some
+Android WebViews never report hidden). `time_to_home_ms` is unchanged (still
+from Bundle start).
+
+**Main bundle** = first `script` resource entry whose file name matches
+`umi.js` / `umi.<hash>.js` (umi with `hash: true`); query/hash ignored.
+No match ⇒ `js_download_ms`/`js_cached` absent. The pattern still has to
+be confirmed against TP's prod build.
+
+**`js_cached` caveat:** if the bundle is served from another origin without
+`Timing-Allow-Origin`, some webviews report `transferSize` as `0` even on a
+network fetch, so `js_cached: true` is **not reliable** for cross-origin
+bundles.
+
 ## Boot-failure watchdog: `buildWatchdogScript({ ingestUrl, timeoutMs })`
 
 If a host app's entire bundle (including this package) fails to load or

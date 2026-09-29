@@ -68,6 +68,61 @@ export function toTechError(err: unknown): TechError {
   }
 }
 
+// Bundle chính của build umi (`hash: true`) — so trên tên file, bỏ query/hash.
+const MAIN_BUNDLE_RE = /\/umi(\.[\w-]+)?\.js$/;
+
+type PerfEntry = Record<string, unknown>;
+
+function entries(type: string): PerfEntry[] {
+  // SAFETY: mọi field đọc ra đều qua typeof/positive() trước khi dùng — webview
+  // cũ có thể trả entry thiếu field, nên coi là bản ghi không tin cậy.
+  return (performance.getEntriesByType(type) || []) as unknown as PerfEntry[];
+}
+
+/** Số dương hoặc undefined — 0 nghĩa là webview không cung cấp/chưa tới mốc. */
+function positive(v: unknown): number | undefined {
+  return typeof v === 'number' && v > 0 ? v : undefined;
+}
+
+/**
+ * v0.3.0 — nhóm `load`, ms từ Navigation start. Chỉ ĐỌC timing có sẵn (không
+ * PerformanceObserver). Dựng từng trường, chỉ số/boolean — KHÔNG chép
+ * `name`/URL của entry. Lỗi bất kỳ ⇒ bỏ cả nhóm (NFR-001), doc vẫn gửi.
+ */
+function readLoad(navMs: number): SessionPayload['load'] {
+  try {
+    const nav = entries('navigation')[0] || {};
+    const bundle = entries('resource').find(
+      e =>
+        e.initiatorType === 'script' &&
+        typeof e.name === 'string' &&
+        MAIN_BUNDLE_RE.test(e.name.split(/[?#]/)[0]),
+    );
+    const fcp = entries('paint').find(
+      e => e.name === 'first-contentful-paint',
+    );
+    const bundleEnd = bundle ? positive(bundle.responseEnd) : undefined;
+    const load: NonNullable<SessionPayload['load']> = {
+      server_response_ms: positive(nav.responseStart),
+      html_ready_ms: positive(nav.domContentLoadedEventEnd),
+      js_start_ms: positive(navMs),
+      js_download_ms:
+        bundle && bundleEnd !== undefined && typeof bundle.startTime === 'number'
+          ? bundleEnd - bundle.startTime
+          : undefined,
+      js_cached:
+        bundle && typeof bundle.transferSize === 'number'
+          ? bundle.transferSize === 0
+          : undefined,
+      first_paint_ms: fcp ? positive(fcp.startTime) : undefined,
+    };
+    // Trường undefined rơi khi JSON.stringify; cả nhóm rỗng thì bỏ `load`.
+    return Object.values(load).some(v => v !== undefined) ? load : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function getPathname(): string {
   try {
     return window.location.pathname;
@@ -97,6 +152,8 @@ export function buildPayload(
     session_finished_at: Date.now(),
     session_duration_ms: performance.now() - state.navMs, // A-25: đồng hồ đơn điệu
     time_to_home_ms: state.marks.home_ready,
+    load: readLoad(state.navMs),
+    hidden_before_home: state.hiddenBeforeHome === true,
     steps: state.steps.map(s => ({ ...s })),
     home_reached: state.homeReached,
     finish_reason: finishReason,

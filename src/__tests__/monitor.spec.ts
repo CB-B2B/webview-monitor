@@ -11,6 +11,7 @@ import {
   installFakeMonotonicClock,
   installNavigationTiming,
   installOnLine,
+  installPerformanceEntries,
   installRandomUUID,
   installSendBeacon,
   removeCrypto,
@@ -779,5 +780,142 @@ describe('monitor — prune TTL thụ động qua attachLifecycle (SEC-4)', () =
     monitor.attachLifecycle();
     expect(readOutbox().length).toBe(1);
     delete process.env.MONITOR;
+  });
+});
+
+describe('monitor — nhóm load + hidden_before_home trong session summary', () => {
+  let clock: ReturnType<typeof installFakeMonotonicClock>;
+  let sendBeaconMock: Mock;
+
+  const BUNDLE_URL = 'https://cdn.tp.invalid/umi.3f9a1c2b.js?token=secret';
+  const NAV = { startTime: 0, responseStart: 300, domContentLoadedEventEnd: 900 };
+
+  // body thô của doc (kiểm không lọt URL) — doc là phần tử đầu mảng.
+  const sentBody = () => blobText(lastSentPayload(sendBeaconMock));
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    __resetMonitorForTest();
+    monitor.init(fixtureConfig());
+    __resetFlagForTest();
+    installNavigationTiming(0);
+    installRandomUUID(true);
+    installOnLine(true);
+    clock = installFakeMonotonicClock(0);
+    sendBeaconMock = installSendBeacon(true);
+  });
+
+  afterEach(() => {
+    clock.restore();
+  });
+
+  it('đủ timing ⇒ load có đủ 6 trường, ms từ Navigation start, không mang URL', async () => {
+    installPerformanceEntries({
+      navigation: [NAV],
+      resource: [
+        { name: 'https://cdn.tp.invalid/vendors.1.js', initiatorType: 'script', startTime: 100, responseEnd: 400, transferSize: 10 },
+        { name: BUNDLE_URL, initiatorType: 'script', startTime: 950, responseEnd: 6950, transferSize: 12345 },
+      ],
+      paint: [
+        { name: 'first-paint', startTime: 7700 },
+        { name: 'first-contentful-paint', startTime: 7800 },
+      ],
+    });
+    clock.set(7500); // Bundle start
+    monitor.start();
+    clock.set(9000);
+    monitor.mark('home_ready');
+    monitor.finish('home_shown');
+    const body = await sentBody();
+    const sent = JSON.parse(body)[0];
+    expect(sent.load).toEqual({
+      server_response_ms: 300,
+      html_ready_ms: 900,
+      js_start_ms: 7500,
+      js_download_ms: 6000,
+      js_cached: false,
+      first_paint_ms: 7800,
+    });
+    expect(sent.time_to_home_ms).toBe(1500); // không đổi: vẫn từ Bundle start
+    expect(body).not.toContain('umi.');
+    expect(body).not.toContain('secret');
+  });
+
+  it('thiếu paint entry và resource bundle ⇒ trường tương ứng vắng mặt (không 0/null), doc vẫn gửi', async () => {
+    installPerformanceEntries({
+      navigation: [NAV],
+      resource: [{ name: 'https://cdn.tp.invalid/vendors.1.js', initiatorType: 'script', startTime: 100, responseEnd: 400, transferSize: 0 }],
+    });
+    clock.set(7500);
+    monitor.start();
+    monitor.finish('pagehide');
+    expect(sendBeaconMock).toHaveBeenCalledTimes(1);
+    const sent = JSON.parse(await sentBody())[0];
+    expect(sent.load).toEqual({ server_response_ms: 300, html_ready_ms: 900, js_start_ms: 7500 });
+  });
+
+  it('webview không cung cấp mốc nào ⇒ bỏ hẳn nhóm load', async () => {
+    installPerformanceEntries({});
+    monitor.start(); // navMs = 0 ⇒ js_start_ms cũng không có
+    monitor.finish('home_shown');
+    const sent = JSON.parse(await sentBody())[0];
+    expect('load' in sent).toBe(false);
+  });
+
+  it('performance ném lỗi khi đọc timing ⇒ doc vẫn gửi, không có load, không throw', async () => {
+    monitor.start();
+    Object.defineProperty(performance, 'getEntriesByType', {
+      configurable: true,
+      writable: true,
+      value: () => {
+        throw new Error('boom');
+      },
+    });
+    expect(() => monitor.finish('home_shown')).not.toThrow();
+    expect(sendBeaconMock).toHaveBeenCalledTimes(1);
+    const sent = JSON.parse(await sentBody())[0];
+    expect('load' in sent).toBe(false);
+    expect(sent.finish_reason).toBe('home_shown');
+  });
+
+  describe('cờ ẩn trước Home ready', () => {
+    const setVisibility = (v: 'hidden' | 'visible') =>
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => v });
+    const goHidden = () => {
+      setVisibility('hidden');
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    afterEach(() => {
+      delete (document as any).visibilityState; // trả về getter mặc định jsdom
+    });
+
+    it('ẩn trước home_ready ⇒ hidden_before_home true', async () => {
+      monitor.start();
+      monitor.attachLifecycle();
+      goHidden();
+      const sent = JSON.parse(await sentBody())[0];
+      expect(sent.finish_reason).toBe('visibility_hidden');
+      expect(sent.hidden_before_home).toBe(true);
+    });
+
+    it('trang đã ẩn lúc start() (Bundle start) ⇒ hidden_before_home true', async () => {
+      setVisibility('hidden');
+      monitor.start();
+      setVisibility('visible');
+      monitor.mark('home_ready');
+      monitor.finish('home_shown');
+      const sent = JSON.parse(await sentBody())[0];
+      expect(sent.hidden_before_home).toBe(true);
+    });
+
+    it('ẩn SAU home_ready ⇒ hidden_before_home false', async () => {
+      monitor.start();
+      monitor.attachLifecycle();
+      monitor.mark('home_ready');
+      goHidden();
+      const sent = JSON.parse(await sentBody())[0];
+      expect(sent.finish_reason).toBe('visibility_hidden');
+      expect(sent.hidden_before_home).toBe(false);
+    });
   });
 });
