@@ -103,6 +103,14 @@ function getNavigationStart(): number {
   return Date.now();
 }
 
+function isHidden(): boolean {
+  try {
+    return document.visibilityState === 'hidden';
+  } catch {
+    return false; // NFR-001
+  }
+}
+
 function classifyHost(url: string): 'main' | 'sys' | 'other' {
   const { mainEndpoint, sysEndpoint } = getConfig();
   if (mainEndpoint && url.indexOf(mainEndpoint) === 0) return 'main';
@@ -117,8 +125,9 @@ function toHex(bytes: Uint8Array): string {
 /**
  * FR-008: mã tra cứu NGẪU NHIÊN THUẦN, không suy ra được từ token/user
  * id/thời gian. E008: thiếu crypto.randomUUID ⇒ fallback getRandomValues,
- * fallback cuối Math.random — CẢ HAI fallback đều đặt `sid_weak: true`,
- * không im lặng hạ chuẩn.
+ * fallback cuối Math.random. v0.3.0 (US30): CHỈ Math.random đặt
+ * `sid_weak: true` — getRandomValues vẫn là CSPRNG, không yếu. Cùng nghĩa với
+ * watchdog (./watchdog) nên boot_timeout và summary nói cùng một điều.
  */
 function generateSessionId(): { id: string; weak?: true } {
   try {
@@ -142,7 +151,7 @@ function generateSessionId(): { id: string; weak?: true } {
       bytes[8] = (bytes[8] & 0x3f) | 0x80;
       const hex = toHex(bytes);
       const id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-      return { id, weak: true };
+      return { id };
     }
   } catch {
     /* fallthrough */
@@ -153,6 +162,35 @@ function generateSessionId(): { id: string; weak?: true } {
     return v.toString(16);
   });
   return { id, weak: true };
+}
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Ticket 02: watchdog (./watchdog) sinh session_id trước bundle và để ở
+ * window.__WV_SID__ — dùng lại để boot_timeout và summary cùng phiên nối
+ * được trên O2. Sai dạng/không có ⇒ null ⇒ tự sinh như cũ (host không
+ * dùng watchdog không đổi hành vi).
+ */
+function readWatchdogSessionId(): { id: string; weak?: true } | null {
+  try {
+    const w = window as unknown as { __WV_SID__?: unknown; __WV_SID_WEAK__?: unknown };
+    if (typeof w.__WV_SID__ !== 'string' || !UUID_RE.test(w.__WV_SID__)) return null;
+    return w.__WV_SID_WEAK__ === true ? { id: w.__WV_SID__, weak: true } : { id: w.__WV_SID__ };
+  } catch {
+    return null;
+  }
+}
+
+function readWatchdogTimedOut(): true | undefined {
+  try {
+    return (window as unknown as { __WV_TIMED_OUT__?: unknown }).__WV_TIMED_OUT__ === true
+      ? true
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // phase-2 R2-6: guard đổi từ state.finished (doc đã gửi) sang state.
@@ -192,6 +230,7 @@ function buildTransportDeps(): TransportDeps {
       typeof navigator !== 'undefined' &&
       typeof navigator.sendBeacon === 'function',
     sendBeacon: (u: string, b: Blob) => navigator.sendBeacon(u, b),
+    // SAFETY: stub chỉ reject — không bao giờ đọc tham số nên khớp mọi chữ ký fetch.
     fetchFn:
       typeof fetch === 'undefined'
         ? (fetchNotSupported as unknown as typeof fetch)
@@ -260,6 +299,7 @@ function _start(): void {
   // an already-successfully-booted page.
   try {
     if (typeof window !== 'undefined') {
+      // SAFETY: global tự khai của watchdog, không có trong lib.dom — chỉ ghi.
       (window as unknown as { __WV_BOOTED__?: boolean }).__WV_BOOTED__ = true;
     }
   } catch {
@@ -290,11 +330,12 @@ function _start(): void {
   // động đầy đủ cho MỌI phiên bất kể rate. Hệ quả có chủ: sessionId() khác
   // rỗng ở 100% phiên ⇒ X-Session-Id header có ở mọi request (FR-005 nối
   // backend-log). `flag.rate` deprecated — KHÔNG dùng để bốc sampling.
-  const { id, weak } = generateSessionId();
+  const { id, weak } = readWatchdogSessionId() || generateSessionId();
   const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
   state = {
     sessionId: id,
     sidWeak: weak,
+    bootTimedOut: readWatchdogTimedOut(),
     startedAt: getNavigationStart(),
     navMs: performance.now(),
     steps: initStepResults(getConfig().steps),
@@ -303,6 +344,7 @@ function _start(): void {
     marks: {},
     finished: false,
     homeReached: false,
+    hiddenBeforeHome: isHidden() || undefined,
     sampleRate: 1, // FR-015: doc không bao giờ lấy mẫu — payload ghi 1
     sendAttempt: 1,
     currentStepSeq: null,
@@ -443,8 +485,10 @@ function _finish(reason: FinishReason): void {
     events.closeEventStream(reason);
     state.sessionClosed = true;
   }
-  // (d) — checkpoint flush, stream tiếp tục.
+  // (d) — checkpoint flush, stream tiếp tục. v0.3.0: ẩn trước home_ready ⇒
+  // hidden_before_home (dùng lại listener visibilitychange sẵn có).
   if (reason === 'visibility_hidden') {
+    if (state.marks.home_ready === undefined) state.hiddenBeforeHome = true;
     events.flushCheckpoint();
   }
 

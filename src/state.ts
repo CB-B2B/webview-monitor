@@ -22,6 +22,7 @@ export interface StepFailure {
 export interface SessionState {
   sessionId: string;
   sidWeak?: true;
+  bootTimedOut?: true; // window.__WV_TIMED_OUT__ lúc start() (ticket 02)
   startedAt: number; // epoch ms — quy chiếu navigation start (không phải mount)
   navMs: number; // performance.now() lúc start()
   steps: StepResult[]; // đúng 6 phần tử, khởi tạo 'pending'
@@ -31,6 +32,7 @@ export interface SessionState {
   finished: boolean; // phase-1: doc đã phát (giữ nguyên cho payload legacy)
   finishReason?: FinishReason;
   homeReached: boolean;
+  hiddenBeforeHome?: true; // v0.3.0 — trang ẩn lúc start() hoặc trước home_ready
   topError?: unknown; // Error-like gốc — chuyển sang TechError lúc buildPayload
   sampleRate: number;
   sendAttempt: number;

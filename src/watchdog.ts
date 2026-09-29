@@ -23,8 +23,9 @@
 // import of any other file in this package, no reference to any other
 // package export. It cannot assume `filter.ts`'s redaction pipeline ever
 // runs, so the payload below ships ONLY fields hand-verified safe by
-// inspection — no session_id (nothing here generates one), no query
-// string, no referrer, no headers.
+// inspection — session_id (a random UUID v4 generated here, not personal
+// data), pathname, ts and numeric/boolean load_* milestones; no query
+// string, no referrer, no headers, no resource URLs.
 //
 // Single timer, checked at fire time: `window.__WV_BOOTED__` is read once,
 // when the timeout fires. If the bundle set it before then, the timer
@@ -32,6 +33,15 @@
 // identical to "clearing the timer" since neither path sends a beacon. No
 // polling loop is needed and one fewer timer is one fewer thing that can
 // go wrong in unprocessed ES5.
+
+/**
+ * Main umi bundle: `umi.js` (no hash) or `umi.<hash>.js` (`hash: true`), any
+ * directory, optional query/hash. ONE pattern for both the watchdog
+ * (`load_js_downloaded`) and the summary (`load.js_*`) so they always agree on
+ * which resource is "the bundle". Exported from here (not payload.ts) because
+ * the watchdog may import nothing; its `.source` is embedded in the script.
+ */
+export const MAIN_BUNDLE_RE = /\/umi(\.[0-9a-z]+)?\.js([?#]|$)/;
 
 export interface WatchdogScriptConfig {
   /** Host's own ingest endpoint for this beacon. Host-supplied — no default (ADR-0001). */
@@ -100,6 +110,47 @@ export function buildWatchdogScript(config: WatchdogScriptConfig): string {
     '        /* no-op — logging must never throw from the watchdog */\n' +
     '      }\n' +
     '    }\n' +
+    // session_id generated BEFORE the timer and shared with the bundle via
+    // window.__WV_SID__ (start() reuses it), so boot_timeout and the session
+    // summary of the same page join on O2. Same source order as start():
+    // randomUUID -> getRandomValues -> Math.random. Each step guarded; a
+    // failure just falls through to the next.
+    '    var SID = \'\';\n' +
+    '    var c = w.crypto;\n' +
+    '    try {\n' +
+    "      if (c && typeof c.randomUUID === 'function') SID = String(c.randomUUID());\n" +
+    '    } catch (uuidErr) {\n' +
+    "      SID = '';\n" +
+    '    }\n' +
+    '    if (!SID) {\n' +
+    '      try {\n' +
+    "        if (c && typeof c.getRandomValues === 'function' && typeof Uint8Array === 'function') {\n" +
+    '          var b = new Uint8Array(16);\n' +
+    '          c.getRandomValues(b);\n' +
+    '          b[6] = (b[6] & 15) | 64;\n' +
+    '          b[8] = (b[8] & 63) | 128;\n' +
+    "          var h = '';\n" +
+    "          for (var i = 0; i < 16; i++) h += (b[i] < 16 ? '0' : '') + b[i].toString(16);\n" +
+    "          SID = h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20);\n" +
+    '        }\n' +
+    '      } catch (grvErr) {\n' +
+    "        SID = '';\n" +
+    '      }\n' +
+    '    }\n' +
+    '    var WEAK = false;\n' +
+    '    if (!SID) {\n' +
+    '      WEAK = true;\n' +
+    "      SID = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (ch) {\n" +
+    '        var r = (Math.random() * 16) | 0;\n' +
+    "        return (ch === 'x' ? r : (r & 3) | 8).toString(16);\n" +
+    '      });\n' +
+    '    }\n' +
+    '    try {\n' +
+    '      w.__WV_SID__ = SID;\n' +
+    '      if (WEAK) w.__WV_SID_WEAK__ = true;\n' +
+    '    } catch (sidErr) {\n' +
+    '      /* no-op — a frozen window must not stop the timer from arming */\n' +
+    '    }\n' +
     "    log('armed, timeout=' + TIMEOUT_MS + 'ms');\n" +
     '    setTimeout(function () {\n' +
     '      try {\n' +
@@ -116,11 +167,57 @@ export function buildWatchdogScript(config: WatchdogScriptConfig): string {
     '          return;\n' +
     '        }\n' +
     "        log('timeout reached, __WV_BOOTED__ not set — firing boot_timeout');\n" +
-    '        var payload = JSON.stringify({\n' +
+    // Read by start() -> summary.boot_timed_out, so a bundle that ran late
+    // (both rows exist on O2) is filterable without a join.
+    '        w.__WV_TIMED_OUT__ = true;\n' +
+    '        var body = {\n' +
     "          event: 'boot_timeout',\n" +
+    '          session_id: SID,\n' +
     '          pathname: w.location ? w.location.pathname : \'\',\n' +
     '          ts: Date.now()\n' +
-    '        });\n' +
+    '        };\n' +
+    '        if (WEAK) body.sid_weak = true;\n' +
+    // Load milestones at fire time (ms from Navigation start). The two
+    // timings share names with the summary's flattened load_* columns;
+    // load_js_downloaded exists ONLY here (the summary has js_download_ms /
+    // js_cached instead). Each read in its OWN
+    // try/catch: a throwing/missing performance API drops only that field,
+    // the beacon still fires. 0 means "not reached yet" -> omitted, never 0.
+    // load_js_downloaded: the main bundle (umi.*.js) has a resource entry ->
+    // stuck in JS; none -> stuck on the network. Only the boolean is sent,
+    // never the resource URL.
+    '        var p = null;\n' +
+    '        var nav = null;\n' +
+    '        try {\n' +
+    '          p = w.performance;\n' +
+    "          nav = p.getEntriesByType('navigation')[0] || null;\n" +
+    '        } catch (navErr) {\n' +
+    '          nav = null;\n' +
+    '        }\n' +
+    '        try {\n' +
+    "          if (nav && typeof nav.responseStart === 'number' && nav.responseStart > 0) body.load_server_response_ms = nav.responseStart;\n" +
+    '        } catch (rsErr) {\n' +
+    '          /* no-op — drop the field, keep the beacon */\n' +
+    '        }\n' +
+    '        try {\n' +
+    "          if (nav && typeof nav.domContentLoadedEventEnd === 'number' && nav.domContentLoadedEventEnd > 0) body.load_html_ready_ms = nav.domContentLoadedEventEnd;\n" +
+    '        } catch (dclErr) {\n' +
+    '          /* no-op — drop the field, keep the beacon */\n' +
+    '        }\n' +
+    '        try {\n' +
+    "          var res = p.getEntriesByType('resource');\n" +
+    '          var dl = false;\n' +
+    '          for (var j = 0; j < res.length; j++) {\n' +
+    "            if (res[j].initiatorType === 'script' && /" + MAIN_BUNDLE_RE.source + "/.test(String(res[j].name))) {\n" +
+    '              dl = true;\n' +
+    '              break;\n' +
+    '            }\n' +
+    '          }\n' +
+    '          body.load_js_downloaded = dl;\n' +
+    '        } catch (resErr) {\n' +
+    '          /* no-op — drop the field, keep the beacon */\n' +
+    '        }\n' +
+    '        var payload = JSON.stringify(body);\n' +
     '        var sent = false;\n' +
     '        try {\n' +
     '          if (w.navigator && typeof w.navigator.sendBeacon === \'function\') {\n' +

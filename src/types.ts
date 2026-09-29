@@ -105,13 +105,28 @@ export interface SessionPayload {
 
   // --- Định danh phiên (bảng A) ---
   session_id: string; // crypto.randomUUID() — FR-008
-  sid_weak?: true; // chỉ có khi phải dùng fallback sinh id (E008)
+  sid_weak?: true; // chỉ khi id sinh bằng Math.random (E008, v0.3.0: cùng nghĩa watchdog)
+  boot_timed_out?: true; // watchdog đã bắn boot_timeout trước khi bundle chạy (ticket 02); vắng = không bắn
 
   // --- Thời gian (bảng A) --- LUÔN number, không bao giờ string (§2.5)
   session_started_at: number; // epoch ms
   session_finished_at: number;
   session_duration_ms: number;
-  time_to_home_ms?: number; // marks.home_ready − navigation start
+  time_to_home_ms?: number; // marks.home_ready − Bundle start (navMs), KHÔNG phải Navigation start
+
+  // --- First load (v0.3.0) — ms từ Navigation start, đọc lúc finish().
+  // Trường không đọc được thì VẮNG (không 0/null); cả nhóm rỗng thì bỏ `load`.
+  // CHỈ số/boolean — không bao giờ URL/chuỗi từ resource entry.
+  load?: {
+    server_response_ms?: number; // navigation entry responseStart
+    html_ready_ms?: number; // navigation entry domContentLoadedEventEnd
+    js_start_ms?: number; // Bundle start (navMs lúc start())
+    js_download_ms?: number; // bundle chính umi.*.js: responseEnd − startTime
+    js_cached?: boolean; // bundle chính: transferSize === 0
+    first_paint_ms?: number; // paint 'first-contentful-paint' (spinner cũng tính)
+  };
+  // false = "không phát hiện ẩn" (một số Android WebView không báo sự kiện ẩn).
+  hidden_before_home?: boolean;
 
   // --- Kết quả bước (bảng A) ---
   steps: StepResult[]; // đúng 6 phần tử, kể cả bước chưa chạy tới ('pending')
@@ -164,10 +179,13 @@ export interface SessionPayload {
 export const WHITELIST_FIELDS: ReadonlyArray<keyof SessionPayload> = [
   'session_id',
   'sid_weak',
+  'boot_timed_out',
   'session_started_at',
   'session_finished_at',
   'session_duration_ms',
   'time_to_home_ms',
+  'load',
+  'hidden_before_home',
   'steps',
   'home_reached',
   'finish_reason',
