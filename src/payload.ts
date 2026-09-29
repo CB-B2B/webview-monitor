@@ -8,6 +8,7 @@ import { buildEnv } from './env';
 import { readAndResetDroppedN } from './outbox';
 import { normalizeRoute } from './routes';
 import { SessionState } from './state';
+import { MAIN_BUNDLE_RE } from './watchdog';
 import { FinishReason, HttpSample, SessionPayload, TechError } from './types';
 
 const MESSAGE_MAX = 512;
@@ -68,8 +69,6 @@ export function toTechError(err: unknown): TechError {
   }
 }
 
-// Bundle chính của build umi (`hash: true`) — so trên tên file, bỏ query/hash.
-const MAIN_BUNDLE_RE = /\/umi(\.[\w-]+)?\.js$/;
 
 type PerfEntry = Record<string, unknown>;
 
@@ -96,7 +95,7 @@ function readLoad(navMs: number): SessionPayload['load'] {
       e =>
         e.initiatorType === 'script' &&
         typeof e.name === 'string' &&
-        MAIN_BUNDLE_RE.test(e.name.split(/[?#]/)[0]),
+        MAIN_BUNDLE_RE.test(e.name),
     );
     const fcp = entries('paint').find(
       e => e.name === 'first-contentful-paint',

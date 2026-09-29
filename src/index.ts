@@ -125,8 +125,9 @@ function toHex(bytes: Uint8Array): string {
 /**
  * FR-008: mã tra cứu NGẪU NHIÊN THUẦN, không suy ra được từ token/user
  * id/thời gian. E008: thiếu crypto.randomUUID ⇒ fallback getRandomValues,
- * fallback cuối Math.random — CẢ HAI fallback đều đặt `sid_weak: true`,
- * không im lặng hạ chuẩn.
+ * fallback cuối Math.random. v0.3.0 (US30): CHỈ Math.random đặt
+ * `sid_weak: true` — getRandomValues vẫn là CSPRNG, không yếu. Cùng nghĩa với
+ * watchdog (./watchdog) nên boot_timeout và summary nói cùng một điều.
  */
 function generateSessionId(): { id: string; weak?: true } {
   try {
@@ -150,7 +151,7 @@ function generateSessionId(): { id: string; weak?: true } {
       bytes[8] = (bytes[8] & 0x3f) | 0x80;
       const hex = toHex(bytes);
       const id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-      return { id, weak: true };
+      return { id };
     }
   } catch {
     /* fallthrough */

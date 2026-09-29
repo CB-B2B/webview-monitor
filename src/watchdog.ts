@@ -34,6 +34,15 @@
 // polling loop is needed and one fewer timer is one fewer thing that can
 // go wrong in unprocessed ES5.
 
+/**
+ * Main umi bundle: `umi.js` (no hash) or `umi.<hash>.js` (`hash: true`), any
+ * directory, optional query/hash. ONE pattern for both the watchdog
+ * (`load_js_downloaded`) and the summary (`load.js_*`) so they always agree on
+ * which resource is "the bundle". Exported from here (not payload.ts) because
+ * the watchdog may import nothing; its `.source` is embedded in the script.
+ */
+export const MAIN_BUNDLE_RE = /\/umi(\.[0-9a-z]+)?\.js([?#]|$)/;
+
 export interface WatchdogScriptConfig {
   /** Host's own ingest endpoint for this beacon. Host-supplied — no default (ADR-0001). */
   ingestUrl: string;
@@ -168,8 +177,10 @@ export function buildWatchdogScript(config: WatchdogScriptConfig): string {
     '          ts: Date.now()\n' +
     '        };\n' +
     '        if (WEAK) body.sid_weak = true;\n' +
-    // Load milestones at fire time (ms from Navigation start, same names as
-    // the summary's flattened load_* columns). Each read in its OWN
+    // Load milestones at fire time (ms from Navigation start). The two
+    // timings share names with the summary's flattened load_* columns;
+    // load_js_downloaded exists ONLY here (the summary has js_download_ms /
+    // js_cached instead). Each read in its OWN
     // try/catch: a throwing/missing performance API drops only that field,
     // the beacon still fires. 0 means "not reached yet" -> omitted, never 0.
     // load_js_downloaded: the main bundle (umi.*.js) has a resource entry ->
@@ -197,7 +208,7 @@ export function buildWatchdogScript(config: WatchdogScriptConfig): string {
     "          var res = p.getEntriesByType('resource');\n" +
     '          var dl = false;\n' +
     '          for (var j = 0; j < res.length; j++) {\n' +
-    "            if (res[j].initiatorType === 'script' && /\\/umi\\.[^\\/?#]*\\.js([?#]|$)/.test(String(res[j].name))) {\n" +
+    "            if (res[j].initiatorType === 'script' && /" + MAIN_BUNDLE_RE.source + "/.test(String(res[j].name))) {\n" +
     '              dl = true;\n' +
     '              break;\n' +
     '            }\n' +

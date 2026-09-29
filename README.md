@@ -120,6 +120,8 @@ from Bundle start).
 
 **Main bundle** = first `script` resource entry whose file name matches
 `umi.js` / `umi.<hash>.js` (umi with `hash: true`); query/hash ignored.
+One exported pattern, `MAIN_BUNDLE_RE`, is shared with the watchdog so
+`load.js_*` and `boot_timeout.load_js_downloaded` always agree.
 No match ⇒ `js_download_ms`/`js_cached` absent. The pattern still has to
 be confirmed against TP's prod build.
 
@@ -144,7 +146,8 @@ Behavior:
 - On execution, generates a random UUID v4 `session_id` (`crypto.randomUUID`
   → `crypto.getRandomValues` → `Math.random`) and stores it on
   `window.__WV_SID__` (plus `window.__WV_SID_WEAK__ = true` only for the
-  `Math.random` fallback), then starts a timer for `timeoutMs`. This
+  `Math.random` fallback — the same meaning `sid_weak` has in the summary;
+  `getRandomValues` is a CSPRNG and is not flagged), then starts a timer for `timeoutMs`. This
   package's `start()` reuses a well-formed `__WV_SID__`, so `boot_timeout`,
   the session summary, events and `X-Session-Id` share one ID. Hosts
   without the watchdog: `start()` generates its own ID as before.
@@ -161,7 +164,7 @@ Behavior:
   load_server_response_ms?, load_html_ready_ms?, load_js_downloaded? }`.
   `load_*` are ms from Navigation start (navigation entry `responseStart`,
   `domContentLoadedEventEnd`; omitted when unreadable or not reached yet)
-  and whether a main-bundle (`umi.*.js`) script resource entry exists
+  and whether a main-bundle (`MAIN_BUNDLE_RE`) script resource entry exists
   (`false` ⇒ stuck on the network, `true` ⇒ stuck in JS). `session_id` is
   a random UUID, not personal data. No query string, no referrer, no
   headers, no resource URLs — there is no redaction pipeline available to

@@ -105,14 +105,14 @@ export interface SessionPayload {
 
   // --- Định danh phiên (bảng A) ---
   session_id: string; // crypto.randomUUID() — FR-008
-  sid_weak?: true; // chỉ có khi phải dùng fallback sinh id (E008)
+  sid_weak?: true; // chỉ khi id sinh bằng Math.random (E008, v0.3.0: cùng nghĩa watchdog)
   boot_timed_out?: true; // watchdog đã bắn boot_timeout trước khi bundle chạy (ticket 02); vắng = không bắn
 
   // --- Thời gian (bảng A) --- LUÔN number, không bao giờ string (§2.5)
   session_started_at: number; // epoch ms
   session_finished_at: number;
   session_duration_ms: number;
-  time_to_home_ms?: number; // marks.home_ready − navigation start
+  time_to_home_ms?: number; // marks.home_ready − Bundle start (navMs), KHÔNG phải Navigation start
 
   // --- First load (v0.3.0) — ms từ Navigation start, đọc lúc finish().
   // Trường không đọc được thì VẮNG (không 0/null); cả nhóm rỗng thì bỏ `load`.

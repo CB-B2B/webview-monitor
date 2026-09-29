@@ -16,6 +16,7 @@ import {
   installSendBeacon,
   removeCrypto,
   removeSendBeacon,
+  installOnlyGetRandomValues,
 } from './testUtils';
 
 function lastSentPayload(sendBeaconMock: Mock): any {
@@ -380,6 +381,16 @@ describe('monitor — vòng đời một phiên', () => {
     const body = await blobText(lastSentPayload(sendBeaconMock));
     const [sent] = JSON.parse(body);
     expect(sent.sid_weak).toBe(true);
+  });
+
+  // v0.3.0 / US30 — sid_weak cùng nghĩa với watchdog: chỉ Math.random là yếu.
+  it('chỉ có crypto.getRandomValues ⇒ UUID mạnh, KHÔNG có sid_weak', async () => {
+    installOnlyGetRandomValues();
+    monitor.start();
+    monitor.finish('home_shown');
+    const [sent] = JSON.parse(await blobText(lastSentPayload(sendBeaconMock)));
+    expect(sent.session_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect('sid_weak' in sent).toBe(false);
   });
 
   // T058 / E008

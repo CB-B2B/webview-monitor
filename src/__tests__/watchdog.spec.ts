@@ -20,7 +20,7 @@
 // (setTimeout, navigator.sendBeacon, navigator.onLine, fetch,
 // location.pathname) is fully reachable through jsdom.
 
-import { buildWatchdogScript } from '../watchdog';
+import { buildWatchdogScript, MAIN_BUNDLE_RE } from '../watchdog';
 
 const INGEST_URL = 'https://obs-qrx.invalid/boot-timeout';
 const TIMEOUT_MS = 8000;
@@ -355,5 +355,35 @@ describe('buildWatchdogScript — black-box eval', () => {
     vi.advanceTimersByTime(TIMEOUT_MS + 1);
 
     expect(sendBeacon).not.toHaveBeenCalled();
+  });
+});
+
+// v0.3.0 — watchdog (boot_timeout.load_js_downloaded) và summary (load.js_*)
+// phải nhận cùng một bundle chính: một mẫu duy nhất, xuất từ watchdog.ts.
+describe('MAIN_BUNDLE_RE — một mẫu cho cả watchdog và summary', () => {
+  const cases: Array<[string, boolean]> = [
+    ['https://cdn.example/umi.js', true],
+    ['https://cdn.example/umi.3f2a9c.js', true],
+    ['https://cdn.example/umi.3f2a9c.js?v=1#x', true],
+    ['https://cdn.example/static/umi.js?t=1', true],
+    ['https://cdn.example/vendors~umi.js', false],
+    ['https://cdn.example/umi.a.b.js', false],
+    ['https://cdn.example/umi.3f2a9c.css', false],
+    ['https://cdn.example/p__index.3f2a9c.js', false],
+  ];
+
+  it.each(cases)('%s ⇒ %s (dùng chung được trong TS)', (url, expected) => {
+    expect(MAIN_BUNDLE_RE.test(url)).toBe(expected);
+  });
+
+  it.each(cases)('%s ⇒ load_js_downloaded %s (script watchdog nhúng đúng mẫu đó)', (url, expected) => {
+    vi.useFakeTimers();
+    delete wv.__WV_BOOTED__;
+    installPerformanceEntries({ resource: [{ name: url, initiatorType: 'script' }] });
+    const sendBeacon = captureBeacon();
+    runWatchdog();
+    vi.advanceTimersByTime(TIMEOUT_MS + 1);
+    expect(JSON.parse(sendBeacon.mock.calls[0][1]).load_js_downloaded).toBe(expected);
+    vi.useRealTimers();
   });
 });
