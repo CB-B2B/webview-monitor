@@ -103,8 +103,10 @@ appear. Terms follow `CONTEXT.md` (**Navigation start**, **Bundle start**,
 
 ### New summary fields
 
-`load` (flattened on O2 as `load_*`): every value is ms from **Navigation
-start**, read once at `finish()` from existing browser timings (no observer):
+`load` (flattened on O2 as `load_*`), read once at `finish()` from existing
+browser timings (no observer). The four **milestones** (`server_response_ms`,
+`html_ready_ms`, `js_start_ms`, `first_paint_ms`) are ms from **Navigation
+start**; `js_download_ms` is a **duration** and `js_cached` a boolean:
 
 | Field | Source |
 | --- | --- |
@@ -113,9 +115,11 @@ start**, read once at `finish()` from existing browser timings (no observer):
 | `js_start_ms` | **Bundle start** (`performance.now()` at `start()`) |
 | `js_download_ms` | main-bundle resource entry `responseEnd − startTime` |
 | `js_cached` | main-bundle resource entry `transferSize === 0` |
-| `first_paint_ms` | paint entry `first-contentful-paint` (a spinner counts) = **First load** |
+| `first_paint_ms` | paint entry `first-contentful-paint` (a spinner counts): the paint end of **First load**, measured from Navigation start |
 
-A field the webview doesn't provide is **absent** (never 0/null); if all are
+A milestone the webview doesn't provide (or reports as 0) is **absent**, never
+0/null; `js_download_ms`/`js_cached` are absent when there is no main-bundle
+entry (`js_download_ms` can be 0 for an in-memory cache hit). If all are
 missing, `load` is dropped. Only numbers/booleans are sent, never resource
 URLs. `time_to_home_ms` is unchanged (still from Bundle start to Home ready).
 
@@ -131,23 +135,25 @@ URLs. `time_to_home_ms` is unchanged (still from Bundle start to Home ready).
 
 **Main bundle** = first `script` resource entry whose file name matches
 `umi.js` / `umi.<hash>.js` (umi with `hash: true`); query/hash ignored.
-One exported pattern, `MAIN_BUNDLE_RE`, is shared with the watchdog so
+One internal pattern (`MAIN_BUNDLE_RE`, not part of the public API) is shared with the watchdog so
 `load.js_*` and `boot_timeout.load_js_downloaded` always agree.
 No match ⇒ `js_download_ms`/`js_cached` absent.
 
 ### Reading a slow session
 
-Filter by `session_id`; the biggest jump between adjacent `load_*` values is
-where the time went.
+Filter by `session_id`; compare the milestones in order
+(`server_response` → `html_ready` / `js_start` → `first_paint`) and read
+`js_download_ms` as its own duration. Rows marked *(inferred)* follow from how
+the fields are defined, not from a verified incident; treat them as leads.
 
 | Signal | Likely cause |
 | --- | --- |
 | `hidden_before_home = true` | Webview paused/backgrounded: not a real slow load, check this first |
-| `load_server_response_ms` large | Server/CDN slow to send HTML |
-| `load_html_ready_ms` ≫ `load_server_response_ms` | HTML and its head scripts (GTM, third-party) slow |
+| `load_server_response_ms` large | Slow first byte: server/CDN, or network (DNS, TLS, redirects) |
+| `load_html_ready_ms` ≫ `load_server_response_ms` | HTML and any synchronous script in it, which can include the bundle itself (umi's default `<script>` runs before DOMContentLoaded) *(inferred)* |
 | `load_js_start_ms` large, `load_js_download_ms` large, `load_js_cached = false` | Network / bundle too big |
 | `load_js_start_ms` large, `load_js_download_ms` small | Device slow to parse/execute JS |
-| `time_to_home_ms` large, `load_*` small | Boot steps after Bundle start; see `steps` |
+| `time_to_home_ms` large, `load_*` small | Boot steps after Bundle start; see `steps` *(inferred)* |
 | `boot_timeout` row, no summary row | Bundle never ran: `load_js_downloaded = false` ⇒ stuck on the network, `true` ⇒ stuck in JS (parse error/crash) |
 | Summary with `boot_timed_out = true` | Bundle ran later than `timeoutMs` but recovered |
 | Everything small, user still reports slow | Time is spent in the native app before Navigation start |
